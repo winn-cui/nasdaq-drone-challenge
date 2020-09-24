@@ -1,33 +1,53 @@
-from typing import TypeVar, List, Dict
-import math
 import argparse
+import math
+import random
 import time
+from typing import TypeVar, List, Dict
 
+
+Drone = TypeVar('Drone')
 Engine = TypeVar('Engine')
 Gyroscope = TypeVar('Gyroscope')
 OrientationSensor = TypeVar('OrientationSensor')
 
+
 class Drone():
-    # using a static variable so that Controller, Gyro, and OrientationSensor can access the information
-    # If you want to make more than 1 drone, you need to 
+
     drone_id = 1
     drone_statuses = dict()
-    # drone_status = "off"
+
     def __init__(self, engines: int):
-        # engines are initialized off, with a power of zero.
-        # drone must take off from flat ground. In the future, look into initializing (pitch, roll) tuple.
-        # drone must take off from a stationary platform. In the future, look into initializing (x, y, z) velocity tuple.
+        """ Engines are initialized off, with a power of zero.
+            Drone must take off from flat ground. In the future, look into initializing (pitch, roll) tuple.
+            Drone must take off from a stationary platform. In the future, look into initializing (x, y, z) velocity tuple.
+        """
         self.drone_id = Drone.drone_id
         self.engines = [Engine() for i in range(engines)]
         self.gyroscope = Gyroscope(self.drone_id)
         self.orientation_sensor = OrientationSensor(self.drone_id)
         self.controller = Controller(self.drone_id, self.engines, self.gyroscope, self.orientation_sensor)
+        self.sabotaged = False
         Drone.drone_statuses[self.drone_id] = "off"
         Drone.drone_id += 1
-        # when drone is initially constructed, it defaults to "off" status
-        # self.drone_status = Drone.drone_status
+
+    def systems_check(self):
+        """ Check hardware to see everything is functional.
+            Currently only checks the Engines.
+        """
+        for engine in self.engines:
+            if engine.engine_status == "destroyed":
+                self.sabotaged = True
+        return 0
 
     def take_off(self):
+        print("Running systems check...")
+        self.systems_check()
+        time.sleep(.5)
+        
+        if self.sabotaged:
+            print("\33[31mWARNING: The Drone is sabotaged, and cannot take off!!\33[0m")
+            return 1
+        
         if Drone.drone_statuses[self.drone_id] == "off":
             print("Turning the Drone on...")
             time.sleep(.5)
@@ -53,28 +73,71 @@ class Drone():
         return Drone.drone_statuses[self.drone_id]
 
     def move(self, direction: str):
-        self.controller.move_drone(direction)
+        if Drone.drone_statuses[self.drone_id] == "off":
+            if self.sabotaged:
+                print("\33[31mWARNING: The Drone is sabotaged. The Drone must be fixed before it can take off! \33[0m")
+            print("The Drone is powered off, and so cannot move :( ")
+        else:
+            if self.sabotaged:
+                print("\33[31mSOS: The Drone is sabotaged. Execute emergency landing procedure immediately!! \33[0m")
+                self.land()
+                return 1
+            print("Moving Drone {0}...".format(direction))
+            time.sleep(1)
+            self.controller.move_drone(direction)
+            print("The Drone is now moving {0}!".format(direction))
+        return 0
 
     def stabilize(self):
         if Drone.drone_statuses[self.drone_id] == "off":
+            if self.sabotaged:
+                print("\33[31mWARNING: The Drone is sabotaged. The Drone must be fixed before it can take off! \33[0m")
             print("The Drone is powered off, and so cannot hover :( ")
         elif Drone.drone_statuses[self.drone_id] == "moving":
+            if self.sabotaged:
+                print("\33[31mSOS: The Drone is sabotaged. Execute emergency landing procedure immediately!! \33[0m")
+                self.land()
+                return 1
             print("Stabilizing drone...")
             time.sleep(1)
             self.controller.stabilize_engines()
             print("The Drone is now hovering! Hurrah.")
         elif Drone.drone_statuses[self.drone_id] == "hovering":
+            if self.sabotaged:
+                print("\33[31mSOS: The Drone is sabotaged. Execute emergency landing procedure immediately!! \33[0m")
+                self.land()
+                return 1
             print("The Drone was already hovering.")
         return 0
     
     def land(self):
-        print("Beginning landing procedure:")
-        time.sleep(1)
-        self.stabilize()
-        print("Systems are a go. Proceed with landing.")
-        time.sleep(1)
-        self.controller.execute_landing_procedure()
-        print("Landing...")
+        if Drone.drone_statuses[self.drone_id] == "off":
+            if self.sabotaged:
+                print("\33[31mWARNING: The Drone is sabotaged. The Drone must be fixed before it can take off! \33[0m")
+            print("The Drone never left ground in the first place.")
+        else:
+            if self.sabotaged:
+                print("\33[31mExecuting emergency landing procedure!! \33[0m")
+                time.sleep(1)
+                self.controller.execute_emergency_landing_procedure()
+                return 1
+            print("Beginning landing procedure:")
+            time.sleep(1)
+            self.stabilize()
+            print("Systems are a go. Proceed with landing.")
+            time.sleep(1)
+            self.controller.execute_landing_procedure()
+            print("Landing...")
+        return 0
+
+    def update(self):
+        self.systems_check()
+        if self.sabotaged:
+            if Drone.drone_statuses[self.drone_id] == "off":
+                print("\33[31mWARNING: The Drone is sabotaged, and needs to be fixed!! \33[0m")    
+            else:
+                print("\33[31mSOS: The Drone is sabotaged, and needs to make an emergency landing!! \33[0m")
+                self.land()
         return 0
 
 
@@ -105,16 +168,30 @@ class Controller():
         return 0
 
     def stabilize_engines(self):
-        # 50 is the power level that will stabilize the Drone.
+        """ 50 is the power level that will stabilize the Drone."""
         self.set_engine_power_levels([50 for i in range(len(self.engines))])
         Drone.drone_statuses[self.drone_id] = "hovering"
         self.update()
         return 0
 
     def execute_landing_procedure(self):
-        # Go down at reduced speed, using default power level of 25.
-        # Power level < 50 means the Drone will descend.
+        """ Go down at reduced speed, using default power level of 25.
+            Power level < 50 means the Drone will descend.
+        """
         self.set_engine_power_levels([25 for i in range(len(self.engines))])
+        Drone.drone_statuses[self.drone_id] = "moving"
+        self.update()
+        return 0
+
+    def execute_emergency_landing_procedure(self):
+        memo = None
+        for i in range(len(self.engines)):
+            if self.engines[i].engine_status == "destroyed":
+                memo = (i + 2) % 4 # assuming 4 engines
+            else:
+                self.engines[i].set_power_level(25)
+        if memo:
+            self.engines[memo].stop()
         Drone.drone_statuses[self.drone_id] = "moving"
         self.update()
         return 0
@@ -145,21 +222,10 @@ class Controller():
         self.update()
         return 0
 
-    # def engine_power_levels(self):
-    #     """ Returns list of power levels for all engines in increasing order of Engine number.
-    #         In the case where there is an even number of engines:
-    #             - Engine 1 is the front engine. 
-    #             - Engine (n/2) + 1 will be the back engine.
-    #     """
-    #     return [e.power_indicator for e in self.engines]
-
     def update(self):
-        # power_levels = Controller.engine_power_levels()
+        Controller.engine_power_levels = [engine.power_indicator for engine in self.engines]
         self.orientation_sensor.update()
         Controller.orientation = dict(self.orientation_sensor)
-        
-        # print("HELLO", orientation)
-        
         self.gyroscope.update()
         return 0
 
@@ -175,9 +241,8 @@ class Engine():
             - Engine power level == 50, portion of drone containing engine should not move.
     """
     engine_id = 1
-    status_options = ("off", "on")
 
-    def __init__(self, power_indicator: int = 0, engine_status: bool = 0):
+    def __init__(self, power_indicator: int = 0, engine_status: str ="off"):
         self.engine_id = Engine.engine_id
         self.power_indicator = power_indicator
         self.engine_status = engine_status
@@ -189,31 +254,21 @@ class Engine():
         yield "engine_status", self.engine_status
 
     def readings(self):
-        # print("Engine " + self.engine_id + " Status: " + )
         print("Engine {0}: ".format(self.engine_id))
-        print(" Status: {0}".format(Engine.status_options[self.engine_status]))
+        print(" Status: {0}".format(self.engine_status))
         print(" Power: {0}".format(self.power_indicator))
-
-    # def details(self):
-    #     return {"engine_id": self.engine_id, "power_indicator": self.power_indicator, "engine_status": self.engine_status}
-    
-    # def status(self):
-    #     return self.engine_status
-
-    # def power_indicator(self):
-    #     return self.power_indicator
-    
+   
     def set_power_level(self, new_power_level: int):
         self.power_indicator = new_power_level
         return 0
 
     def start(self, initial_power_level: int = 75):
-        self.engine_status = 1
+        self.engine_status = "on"
         self.power_indicator = initial_power_level
         return 0
 
     def stop(self):
-        self.engine_status = 0
+        self.engine_status = "off"
         self.power_indicator = 0
         return 0 
 
@@ -226,7 +281,7 @@ class Gyroscope():
         self.z = z # left/right velocity
 
     def readings(self):
-        print("Gyrosope Measurements: ")
+        print("Gyroscope Measurements: ")
         if Drone.drone_statuses[self.drone_id] == "off":
             print(" X Velocity: {0}".format("N/A"))
             print(" Y Velocity: {0}".format("N/A"))
@@ -248,7 +303,6 @@ class Gyroscope():
         magnitude = (average_power - 50) * math.cos(radians)
         return magnitude
 
-
     def update(self):
         """ Simplifying Assumptions:
             - Since yaw is not considered in these calculations, the Z Velocity vector will always be 0.
@@ -261,16 +315,29 @@ class Gyroscope():
         pitch = Controller.orientation["pitch"]
         roll = Controller.orientation["roll"]
         if pitch == 0 and roll == 0: # the drone is moving up/down
-            self.x = 0
+            self.x = 0.0
             self.y = Gyroscope.calculate_velocity(0)
-            self.z = 0
-        elif pitch == 0 and roll == 1: # the drone is moving left/right
-            pass
-        elif pitch == 1 and roll == 0: # the drone is moving forwards/backwords
-            pass
+            self.z = 0.0
+        elif pitch == 0 and roll != 0: # the drone is moving left/right
+            self.x = Gyroscope.calculate_velocity(roll)
+            self.y = 0.0
+            self.z = 0.0
+        elif pitch != 0 and roll == 0: # the drone is moving forwards/backwords
+            self.x = Gyroscope.calculate_velocity(pitch)
+            self.y = 0.0
+            self.z = 0.0
         else:
             print("The Drone has escaped to the Z dimension??!!")
-            return 1
+            if abs(pitch) >= abs(roll):
+                self.x = Gyroscope.calculate_velocity(pitch)
+                self.y = Gyroscope.calculate_velocity(90 - pitch)
+                self.z = "???"
+                return 1
+            else:
+                self.x = Gyroscope.calculate_velocity(roll)
+                self.y = Gyroscope.calculate_velocity(90 - roll)
+                self.z = "???"
+                return 1
         return 0
 
 
@@ -291,7 +358,7 @@ class OrientationSensor():
                 - The most extreme power level diff would be +/- 100. Limit the max angle to 50 by dividing the diff by 2.
                 - Angle = (power_level_A - power_level_B)/2
         """
-        # in clock-wise arrangement
+        # in clock-wise arrangement, starting from the front engine:
         front_engine = Controller.engine_power_levels[0]
         right_engine = Controller.engine_power_levels[1]
         back_engine = Controller.engine_power_levels[2]
@@ -309,8 +376,50 @@ class OrientationSensor():
             print(" Pitch: {0}".format(self.pitch))
             print(" Roll: {0}".format(self.roll))
         return 0
-    
 
+
+class God():
+    def __init__(self, drone: Drone):
+        self.drone = drone
+
+    def destroy_engine(self):
+        if self.drone.sabotaged:
+            print("Sorry God, but you're only allowed to inflict one Engine's worth of damage per simulation.")
+            return 1
+        else:
+            selected_engine = random.randint(0, len(self.drone.engines)-1)
+            print("God zaps Engine {0}.".format(selected_engine+1))
+            self.drone.engines[selected_engine].engine_status = "destroyed"
+            self.drone.engines[selected_engine].power_indicator = 0
+            self.drone.update()
+        return 0
+        
+    def sabotage_take_off(self):
+        if Drone.drone_statuses[self.drone.drone_id] != "off":
+            print("God was too late, and couldn't sabotage the Drone before it took off. Whew!")
+            return 1
+        else:
+            if self.drone.sabotaged:
+                print("Sorry God, but you're only allowed to inflict one Engine's worth of damage per simulation.")
+                return 1
+            else:
+                self.destroy_engine()        
+        return 0
+
+    def nudge_drone(self):
+        if Drone.drone_statuses[self.drone.drone_id] == "off":
+            print("The Drone is off, and is pretty unnudgeable right now.")
+        else:
+            print("The Drone has been nudged in all sorts of strange ways!")
+            time.sleep(2)
+            self.drone.orientation_sensor.pitch += random.uniform(-5, 5)
+            self.drone.orientation_sensor.roll += random.uniform(-5, 5)
+            Controller.orientation = dict(self.drone.orientation_sensor)
+            self.drone.gyroscope.update()
+            self.drone.readings()
+            print("\n\33[32mRecalibrating drone...\33[0m\n")
+            time.sleep(1)
+            self.drone.stabilize()    
 
 
 def main():
@@ -324,6 +433,7 @@ def main():
     print()
 
     drone = Drone(4)
+    god = God(drone)
 
     parser = argparse.ArgumentParser(description='Interact with your Drone.')
     while True:
@@ -335,19 +445,19 @@ def main():
             drone.move("left")
             drone.readings()
         elif command == "move_right":
-            drone.move("left")
+            drone.move("right")
             drone.readings()
         elif command == "move_forward":
-            drone.move("left")
+            drone.move("forward")
             drone.readings()
         elif command == "move_backward":
-            drone.move("left")
+            drone.move("backward")
             drone.readings()
         elif command == "move_up":
-            drone.move("left")
+            drone.move("up")
             drone.readings()
         elif command == "move_down":
-            drone.move("left")
+            drone.move("down")
             drone.readings()
         elif command == "stabilize":
             drone.stabilize()
@@ -357,45 +467,17 @@ def main():
         elif command == "land":
             drone.land()
             drone.readings()
+        elif command == "destroy_engine":
+            god.destroy_engine()
+            drone.readings()
+        elif command == "sabotage_take_off":
+            god.sabotage_take_off()
+            drone.readings()
+        elif command == "nudge_drone":
+            god.nudge_drone()
+            drone.readings()
         else:
-            print("This command is not supported.")
+            print("This command is not supported. \n")
     
-    # args = parser.parse_args()
-
 
 main()
-
-
-
-
-
-# print("Welcome to Memorepo!")
-    
-#     parser = argparse.ArgumentParser(description='Interact with MemoRepo.')
-#     parser.add_argument('--memorize', nargs="?", const="interface")
-#     parser.add_argument('--recite', nargs="?", const="all")
-#     args = parser.parse_args()
-
-#     if args.memorize == "interface":
-#         print("Input your sentences here:")
-#         while True:
-#             statement = input(">>> ")
-#             # Do spacy preprocessing
-#             # doc = nlp(statement)
-#             # for token in doc:
-#             #     print(token.text, token.lemma_, spacy.explain(token.tag_))
-#             interface.memorize(str(statement))
-#     elif args.memorize:
-#         # memorize given sentence
-#         print(args.memorize)
-#         interface.memorize(str(args.memorize))
-
-#     if args.recite == "all":
-#         # get_all sentences that exist in memrepo
-#         # arguments = all, some, specific
-#         interface.recite(str(args.recite))
-#         #write
-#         # if args.
-#         # if args.recall
-
-# # drone has engines, 
